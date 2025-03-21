@@ -1,0 +1,112 @@
+---
+title: "Colombian geographic reference database:  database creation"
+author: "Marius Bottin"
+format: 
+  gfm:
+    df-print: kable
+bibliography: sources.bib
+---
+
+The files have been downloaded with the code from <./step1_downloading_sources.md>.
+Now it is time to create the database and to start analysing the maps.
+
+This might change in the future, but I believe that we will first load the shapefiles in R, then write them in a simple spatialite database.
+
+The advantage of spatialite database is that QGIS manages them natively without any need for additional software, R manages them pretty well too.
+Additionally, a spatialite database is a simple file, that may be shared quite easily, or even integrated in a R-package or a python module.
+
+# Reading files
+
+```{r}
+files_sourceMaps<-dir("./sourceMaps",recursive = T)
+bs_files_sourceMaps<-basename(files_sourceMaps)
+dir_files_sourceMaps<-dirname(files_sourceMaps)
+downloaded<-read.csv("./sourceMaps/sourcesDownloaded.csv",row.names=1)
+stopifnot(downloaded$testFile%in%bs_files_sourceMaps)
+mainFiles<-paste0("./sourceMaps/",files_sourceMaps[match(downloaded$testFile,bs_files_sourceMaps)])
+```
+
+
+Now we can read the files and put them in a list `data`.
+We will transform the data and put them into MAGNAS-SIRGAS, more fitted to data in Colombia.
+
+
+```{r}
+require(sf)
+data<-lapply(mainFiles,st_read)
+names(data)<-downloaded$name
+magnas<-st_crs(4996)
+data<-lapply(data,st_transform,crs=magnas)
+```
+
+
+# Creating the database and putting the raw data in it
+
+With the `st_write` function of the `sf` package, creating a spatialite database is relatively simple.
+Simply putting a new layer in the spatialite file would create the database if it does not exist yet.
+
+
+```{r}
+require(RSQLite)
+dbDir<-"./database/"
+if(!dir.exists(dbDir)){dir.create(dbDir)}
+spatialite_file<-paste0(dbDir,"/geogref.sqlite3")
+nameTables<-tolower(paste0("raw_", downloaded$name))
+for(i in 1:length(data))
+{
+  st_write(data[[i]],dsn=spatialite_file,layer=nameTables[i],driver="SQLite",append=F)
+}
+```
+
+
+¡So now we have the database with the raw data in it!
+Let's play a bit with it
+
+# Analysing raw spatial tables
+
+In order to be able to play with the raw tables in the spatialite database, it may be useful to create a connection to it in the R session:
+
+```{r}
+geogref<-dbConnect(SQLite(),spatialite_file,loadable.extensions=TRUE)
+dbGetInfo(geogref)[["loadableExtensions"]]
+```
+
+In order to make operations go faster, we need spatial indexing on the 3 tables
+
+```{r}
+dbListTables(geogref)
+geoms<-dbReadTable(geogref,"geometry_columns")
+m_tabname<-match(geoms$f_table_name,nameTables)
+indexesToCreate<-paste0(geoms$f_table_name,"_geom_idx")
+(indexes<-dbGetQuery(geogref,"SELECT * FROM SQLIte_master WHERE type='index'"))
+already<-indexesToCreate%in%indexes$name
+if(sum(!already))
+{
+  for(i in (1:length(indexesToCreate))[!already])
+  {
+    dbExecute(geogref,paste0("CreateSpatialIndex ('", geoms$f_table_name[i], "', '",geoms$f_geometry_column[i],"')"))
+  }
+}
+```
+
+```{r}
+dbGetQuery(geogref,"SELECT rv1.ogc_fid,rv2.ogc_fid FROM raw_veredas rv1 JOIN  raw_veredas rv2 ON ST_Intersects(rv1.GEOMETRY,rv2.GEOMETRY)=1 AND rv1.ogc_fid != rv2.ogc_fid")
+```
+
+
+Plot the unified ("dissolved") polygons from the 3 tables
+
+```{r}
+
+```
+
+
+
+
+
+# Turning off the light and leaving
+
+```{r}
+dbDisconnect(geogref)
+```
+
