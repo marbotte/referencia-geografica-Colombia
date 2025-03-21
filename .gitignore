@@ -47,3 +47,13 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Source map directory
+sourceMaps/
+
+#R project
+**/**.Rproj
+
+# BAK bib files
+**/**.bib.sav
+**/**.bib.bak
