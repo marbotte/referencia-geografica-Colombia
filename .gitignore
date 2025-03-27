@@ -51,6 +51,9 @@ rsconnect/
 # Source map directory
 sourceMaps/
 
+# database directory
+
+
 #R project
 **/**.Rproj
 
