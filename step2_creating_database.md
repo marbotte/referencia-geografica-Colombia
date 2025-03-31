@@ -315,24 +315,11 @@ plot(diss_veredas,col="red",border=NA,add=T)
 
 This means that we could have a complete map by merging the objects.
 
-However, we should find out first what are the urban areas which
-correspond to no veredas.
-
-``` sql
-#| connection: dev_geogRef
-WITH a AS(
-  SELECT ST_UNION(geom) geom FROM raw_veredas
-)
-SELECT 
-```
-
-# 
+# Joining raw_centpobl y raw_veredas into multipolygons
 
 We’ve got another problem here, everything is as instead of having
 multipolygons, *raw_centpobl* had transformed the multipolygons into
-polygons. It might even be possible that in those cases the polygons
-have a small deviation, because limits do not corresponds anymore to the
-limits from the raw_veredas.
+polygons. The same can be said for *raw_vereda*.
 
 ``` sql
 WITH a AS(
@@ -362,133 +349,605 @@ ORDER BY orig_fid
 
 Displaying records 1 - 10
 
-``` r
-veredas<-st_read(dev_geogRef,layer="raw_veredas")
+The best might be to create new tables…
+
+``` sql
+DROP TABLE IF EXISTS raw_centpobl2 CASCADE;
 ```
 
-``` r
-q<-"
+``` sql
+CREATE TABLE raw_centpobl2 AS(
+  SELECT cod_dpto, cod_mpio, cod_clas, cod_setr, cod_secr, cod_cpob, nom_cpob, cod_dane, cpob_area, altitud, shape_area, shape_len, orig_fid, ST_UNION(geom) geom
+  FROM raw_centPobl
+  GROUP BY cod_dpto, cod_mpio, cod_clas, cod_setr, cod_secr, cod_cpob, nom_cpob, cod_dane, cpob_area, altitud, shape_area, shape_len, orig_fid
+);
+```
+
+``` sql
+ALTER TABLE raw_centpobl2 ALTER COLUMN geom TYPE GEOMETRY(MULTIPOLYGON,4686);
+```
+
+``` sql
+CREATE INDEX raw_centpobl2_spat_idx ON raw_centpobl2 USING GIST(geom);
+```
+
+``` sql
+ALTER TABLE raw_centpobl2 ADD PRIMARY KEY (cod_cpob);
+```
+
+``` sql
+DROP TABLE IF EXISTS raw_veredas2 CASCADE;
+```
+
+``` sql
+CREATE TABLE raw_veredas2 AS(
+  SELECT cod_dpto, dptompio, codigo_ver, nom_dep, nomb_mpio, nombre_ver, vigencia, fuente, STRING_AGG(descripcio, '|') descripcio, MAX(seudonimos) seudonimos, STRING_AGG(observacio,'|') observacio, conseje, ST_UNION(geom) geom
+  FROM raw_veredas
+  GROUP BY cod_dpto,dptompio, codigo_ver, nom_dep, nomb_mpio, nombre_ver, vigencia, fuente,  conseje
+);
+```
+
+``` sql
+ALTER TABLE raw_veredas2 ADD PRIMARY KEY (codigo_ver);
+```
+
+``` sql
+CREATE INDEX IF NOT EXISTS raw_veredas2_spat_idx ON raw_veredas2 USING GIST(geom);
+```
+
+# Check which ones correspond to empty areas in raw_veredas
+
+``` sql
+DROP TABLE IF EXISTS ver_over_centob CASCADE;
+CREATE TABLE IF NOT EXISTS ver_over_centpob
+(
+  vereda text REFERENCES raw_veredas2(codigo_ver),
+  centpob char(8) REFERENCES raw_centpobl2 (cod_cpob),
+  common_area double precision,
+  PRIMARY KEY (vereda,centpob)
+);
+INSERT INTO ver_over_centpob
+SELECT codigo_ver,cp.cod_cpob,ST_Area(ST_intersection(cp.geom,v.geom))
+FROM raw_centpobl2 cp
+JOIN raw_veredas2 v ON ST_overlaps(cp.geom,v.geom);
+
+ALTER TABLE raw_centpobl2 DROP COLUMN IF EXISTS over_vereda_cd_ver, DROP COLUMN IF EXISTS shared_area_vereda;
+ALTER TABLE raw_centpobl2 ADD COLUMN IF NOT EXISTS over_vereda_cd_ver TEXT[], ADD COLUMN IF NOT EXISTS shared_area_vereda double precision;
+
 WITH a AS(
-SELECT orig_fid 
-FROM raw_centpobl
-GROUP BY orig_fid
-HAVING count(*)>1
-ORDER BY random()
-LIMIT 50
+SELECT cp.orig_fid, ARRAY_AGG(voc.vereda) over_ver,
+  CASE
+    WHEN SUM(common_area) IS NULL THEN 0
+    ELSE SUM(common_area)
+  END shared_area
+FROM raw_centpobl2 cp
+LEFT JOIN ver_over_centpob voc ON centpob=cod_cpob
+GROUP BY cp.orig_fid
 )
-SELECT rc.*
-FROM a 
-LEFT JOIN raw_centpobl rc USING (orig_fid)
-ORDER BY orig_fid 
-"
-rand10_multi<-st_read(dev_geogRef,query=q)
-for(i in unique(rand10_multi$orig_fid))
-{
-  plot(st_geometry(rand10_multi[rand10_multi$orig_fid==i,]),reset=F,col=NA,main=unique(rand10_multi$nom_cpob[rand10_multi$orig_fid==i]))
-  plot(st_geometry(veredas),add=T,col=adjustcolor("red",alpha.f = .3))
-  plot(st_geometry(rand10_multi[rand10_multi$orig_fid==i,]),add=T,col=adjustcolor("blue", alpha.f = .3))
-}
+UPDATE raw_centpobl2 cp
+SET over_vereda_cd_ver=a.over_ver, shared_area_vereda=a.shared_area
+FROM a
+WHERE a.orig_fid=cp.orig_fid;
+
+ALTER TABLE raw_centpobl2 ADD COLUMN IF NOT EXISTS prop_area_vereda double precision;
+UPDATE raw_centpobl2 SET prop_area_vereda=shared_area_vereda/ST_Area(geom);
 ```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-1.png)
+It appears there are no intermediate case: either urban areas are
+excluded from the veredas, or they are integrated:
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-2.png)
+``` r
+cp2<-dbReadTable(dev_geogRef,"raw_centpobl2")
+hist(cp2$prop_area_vereda, nclass=100)
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-3.png)
+# Reference tables: departments, municipalities and vereda
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-4.png)
+``` sql
+DROP TABLE IF EXISTS departamento CASCADE;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-5.png)
+``` sql
+DROP TABLE IF EXISTS municipio CASCADE;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-6.png)
+``` sql
+DROP TABLE IF EXISTS vereda CASCADE;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-7.png)
+``` sql
+CREATE TABLE departamento(
+  cd_dpto char(2) PRIMARY KEY,
+  departamento text UNIQUE,
+  distrito_capital boolean default false
+);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-8.png)
+``` sql
+CREATE TABLE municipio(
+  cd_mpio char(5) PRIMARY KEY,
+  municipio text,
+  cd_dpto varchar(2) REFERENCES departamento(cd_dpto),
+  UNIQUE(cd_dpto,municipio)
+);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-9.png)
+``` sql
+CREATE INDEX fkey_municipio_departamento_cd_dpto_idx ON municipio(cd_dpto);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-10.png)
+``` sql
+CREATE TABLE vereda(
+  cd_ver varchar(8) PRIMARY KEY,
+  vereda text,
+  cd_mpio char(5) REFERENCES municipio(cd_mpio),
+  cd_dpto char(2) REFERENCES departamento(cd_dpto),
+  centro_pobl boolean default false,
+  vigencia integer,
+  seudonimos boolean,
+  fuente text,
+  comentarios text
+);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-11.png)
+``` sql
+SELECT AddGeometryColumn ('public','vereda','the_geom',4686,'MULTIPOLYGON',2);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-12.png)
+| addgeometrycolumn                                         |
+|:----------------------------------------------------------|
+| public.vereda.the_geom SRID:4686 TYPE:MULTIPOLYGON DIMS:2 |
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-13.png)
+1 records
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-14.png)
+``` sql
+CREATE INDEX fkey_vereda_municipio_cd_mpio_idx ON vereda(cd_mpio);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-15.png)
+``` sql
+CREATE INDEX fkey_vereda_municipio_cd_dpto_idx ON vereda(cd_dpto);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-16.png)
+``` sql
+CREATE INDEX vereda_the_geom_spat_idx ON vereda USING GIST(the_geom);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-17.png)
+## Populating the tables
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-18.png)
+``` sql
+INSERT INTO departamento(cd_dpto,departamento)
+SELECT DISTINCT cod_dpto,nom_dep
+FROM raw_veredas2;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-19.png)
+``` sql
+UPDATE departamento SET distrito_capital=true WHERE cd_dpto='11';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-20.png)
+It appears there is an error with the vereda SAN JUAN DE LAS COCHAS
+(86219000) en el departamento del Putumayo, which appears in the
+municipality SIBUNDOY when its code places it in the municipality COLÓN.
+It would need some more research to know whether the error is the
+municipality or the code, but for now we will accept the code and change
+the name of the municipality
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-21.png)
+``` sql
+UPDATE raw_veredas2
+SET nomb_mpio='COLÓN'
+WHERE codigo_ver='86219000';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-22.png)
+``` sql
+INSERT INTO municipio
+SELECT DISTINCT dptompio,nomb_mpio,cod_dpto
+FROM raw_veredas2;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-23.png)
+``` sql
+INSERT INTO vereda(cd_ver,vereda,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom)
+SELECT 
+  codigo_ver,
+  CASE
+    WHEN nombre_ver='SIN INFORMACION' THEN NULL
+    ELSE nombre_ver
+  END vereda,
+  dptompio,
+  cod_dpto,
+  CASE
+    WHEN vigencia IN ('INDF','ESRI') THEN NULL
+    ELSE vigencia::int
+  END vigencia,
+  seudonimos::boolean,
+  fuente,
+  CASE
+    WHEN descripcio IN ('','Null','NULL','NULL|NULL') THEN NULL
+    ELSE descripcio
+  END || '|' ||
+  CASE
+    WHEN observacio IN ('') THEN NULL
+    WHEN observacio='MODIFICADA|MODIFICADA' THEN 'MODIFICADA'
+    ELSE observacio
+  END,
+  geom
+FROM raw_veredas2
+;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-24.png)
+# Creating the urban center layer
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-25.png)
+``` sql
+DROP TABLE IF EXISTS clas_cent_pobl CASCADE;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-26.png)
+``` sql
+DROP TABLE IF EXISTS cent_pobl CASCADE;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-27.png)
+``` sql
+CREATE TABLE clas_cent_pobl
+(
+  cd_clas int PRIMARY KEY,
+  clas text UNIQUE
+);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-28.png)
+``` sql
+INSERT INTO clas_cent_pobl
+VALUES
+  (1,'Cabecera municipal'),
+  (2,'Centro urbano'),
+  (3,'Rural');
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-29.png)
+``` sql
+CREATE TABLE cent_pobl(
+  cd_cpob char(8) PRIMARY KEY,
+  cd_dane char(14) UNIQUE,
+  cent_pobl text,
+  cd_dpto char(2) REFERENCES departamento(cd_dpto),
+  cd_mpio char(5) REFERENCES municipio(cd_mpio),
+  cd_setr char(3),
+  cd_secr char(2),
+  cd_clas int REFERENCES clas_cent_pobl(cd_clas)
+);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-30.png)
+``` sql
+SELECT AddGeometryColumn ('public','cent_pobl','the_geom',4686,'MULTIPOLYGON',2);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-31.png)
+| addgeometrycolumn                                            |
+|:-------------------------------------------------------------|
+| public.cent_pobl.the_geom SRID:4686 TYPE:MULTIPOLYGON DIMS:2 |
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-32.png)
+1 records
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-33.png)
+``` sql
+CREATE INDEX fkey_cent_pobl_municipio_cd_mpio_idx ON cent_pobl(cd_mpio);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-34.png)
+``` sql
+CREATE INDEX fkey_cent_pobl_municipio_cd_dpto_idx ON cent_pobl(cd_dpto);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-35.png)
+``` sql
+CREATE INDEX cent_pobl_the_geom_spat_idx ON cent_pobl USING GIST(the_geom);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-36.png)
+``` sql
+COMMENT ON COLUMN cent_pobl.cd_cpob IS 'Código DANE concatenado departamento, municipio y  centro poblado';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-37.png)
+``` sql
+COMMENT ON COLUMN cent_pobl.cd_dane IS 'Código DANE concatenado departamento, municipio, clase, sector rural, sección rural y centro poblado';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-38.png)
+``` sql
+COMMENT ON COLUMN cent_pobl.cd_dpto IS 'Código DANE departamento';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-39.png)
+``` sql
+COMMENT ON COLUMN cent_pobl.cd_mpio IS 'Código DANE municipio';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-40.png)
+``` sql
+COMMENT ON COLUMN cent_pobl.cd_setr IS 'Código DANE sector rural';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-41.png)
+``` sql
+COMMENT ON COLUMN cent_pobl.cd_secr IS 'Código DANE sección rural';
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-42.png)
+``` sql
+INSERT INTO cent_pobl
+SELECT cod_cpob, cod_dane, nom_cpob, cod_dpto, cod_mpio, cod_setr, cod_secr, cod_clas::int,geom
+FROM raw_centpobl2;
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-43.png)
+# Adding urban centers into the vereda layer (filling holes)
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-44.png)
+I don’t understand why those give different results:
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-45.png)
+``` sql
+SELECT cd_cpob, cd_ver, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true) common_area_m2
+FROM cent_pobl v
+JOIN vereda cp ON ST_Intersects(v.the_geom,cp.the_geom) AND ST_Area(ST_intersection(v.the_geom,cp.the_geom),true) > 0
+ORDER BY cd_cpob, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-46.png)
+| cd_cpob  | cd_ver   | common_area_m2 |
+|:---------|:---------|---------------:|
+| 05001000 | 05380012 |      0.0000006 |
+| 05001000 | 05001007 |      0.0002642 |
+| 05001000 | 05088010 |      0.0003234 |
+| 05001000 | 05360005 |      0.0007333 |
+| 05001000 | 05088004 |      0.0019203 |
+| 05001000 | 05266005 |      0.0043331 |
+| 05001000 | 05001031 |      0.0067449 |
+| 05001000 | 05001027 |      0.0080902 |
+| 05001000 | 05001049 |      0.0167616 |
+| 05001000 | 05001028 |      0.0205431 |
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-47.png)
+Displaying records 1 - 10
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-48.png)
+``` sql
+SELECT cd_cpob, cd_ver, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true) common_area_m2
+FROM cent_pobl v
+JOIN vereda cp ON ST_Overlaps(v.the_geom,cp.the_geom)
+ORDER BY cd_cpob, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true);
+```
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-49.png)
+| cd_cpob  | cd_ver   | common_area_m2 |
+|:---------|:---------|---------------:|
+| 05001000 | 05380012 |      0.0000006 |
+| 05001000 | 05001007 |      0.0002642 |
+| 05001000 | 05088010 |      0.0003234 |
+| 05001000 | 05360005 |      0.0007333 |
+| 05001000 | 05088004 |      0.0019203 |
+| 05001000 | 05266005 |      0.0043331 |
+| 05001000 | 05001031 |      0.0067449 |
+| 05001000 | 05001027 |      0.0080902 |
+| 05001000 | 05001049 |      0.0167616 |
+| 05001000 | 05001028 |      0.0205431 |
 
-![](step2_creating_database_files/figure-commonmark/unnamed-chunk-12-50.png)
+Displaying records 1 - 10
+
+``` sql
+DROP TABLE IF EXISTS test;
+```
+
+``` sql
+CREATE TABLE test AS(
+  SELECT cd_cpob, cd_ver, ST_area(ST_intersection(v.the_geom,cp.the_geom),true) area, ST_MakeValid(ST_intersection(v.the_geom,cp.the_geom)) geom
+  FROM cent_pobl v
+  JOIN vereda cp ON ST_Intersects(v.the_geom,cp.the_geom) AND ST_Area(ST_intersection(v.the_geom,cp.the_geom)) > 0
+);
+```
+
+``` sql
+SELECT ST_GeometryType(geom),min(area),max(area),count(*) FROM test GROUP BY ST_GeometryType(geom);
+```
+
+| st_geometrytype       |     min |        max | count |
+|:----------------------|--------:|-----------:|------:|
+| ST_GeometryCollection | 6.3e-06 |   27806.13 |   885 |
+| ST_MultiPolygon       | 4.7e-06 | 3808363.05 |  5741 |
+| ST_Polygon            | 0.0e+00 | 9081370.56 |  6702 |
+
+3 records
+
+``` sql
+SELECT cd_cpob, count(DISTINCT cd_ver)
+FROM cent_pobl
+LEFT JOIN test USING (cd_cpob)
+GROUP BY cd_cpob
+ORDER BY count(DISTINCT cd_ver);
+```
+
+| cd_cpob  | count |
+|:---------|------:|
+| 19100013 |     1 |
+| 05001001 |     1 |
+| 05001004 |     1 |
+| 05001009 |     1 |
+| 20621011 |     1 |
+| 20621013 |     1 |
+| 20621016 |     1 |
+| 20710001 |     1 |
+| 20710002 |     1 |
+| 20710008 |     1 |
+
+Displaying records 1 - 10
+
+# Creating the layer with veredas and urban centers
+
+``` sql
+DROP TABLE IF EXISTS vereda_cpob CASCADE;
+```
+
+``` sql
+CREATE TABLE vereda_cpob
+(
+  id serial PRIMARY KEY,
+  cd_ver varchar(8),
+  cd_cpob char(8) REFERENCES cent_pobl(cd_cpob),
+  name text,
+  cd_mpio char(5) NOT NULL REFERENCES municipio(cd_mpio),
+  cd_dpto char(2) NOT NULL REFERENCES departamento(cd_dpto),
+  vigencia integer,
+  seudonimos boolean,
+  fuente text,
+  comentarios text
+);
+```
+
+``` sql
+SELECT AddGeometryColumn ('public','vereda_cpob','the_geom',4686,'MULTIPOLYGON',2);
+```
+
+| addgeometrycolumn                                              |
+|:---------------------------------------------------------------|
+| public.vereda_cpob.the_geom SRID:4686 TYPE:MULTIPOLYGON DIMS:2 |
+
+1 records
+
+``` sql
+CREATE INDEX IF NOT EXISTS fkey_vereda_cpob_municipio_cd_mpio_idx ON vereda_cpob(cd_mpio);
+```
+
+``` sql
+CREATE INDEX IF NOT EXISTS fkey_vereda_cpob_departamento_cd_dpto_idx ON vereda_cpob(cd_dpto);
+```
+
+``` sql
+CREATE INDEX IF NOT EXISTS vereda_cpob_the_geom_spat_idx ON vereda_cpob USING GIST(the_geom);
+```
+
+``` sql
+COMMENT ON COLUMN vereda_cpob.cd_ver IS 'Null cuando es una vereda clasica, cuando es un centro poblado, corresponde al Código DANE concatenado departamento, municipio y  centro poblado';
+```
+
+``` sql
+COMMENT ON COLUMN vereda_cpob.cd_cpob IS 'Null cuando es una vereda clasica, cuando es un centro poblado, corresponde al Código DANE concatenado departamento, municipio y  centro poblado';
+```
+
+``` sql
+INSERT INTO vereda_cpob(cd_ver,name,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom)
+SELECT cd_ver,vereda,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom
+FROM vereda
+;
+```
+
+``` sql
+DROP TABLE IF EXISTS test2;
+```
+
+``` sql
+CREATE TABLE test2 AS(
+  SELECT cd_cpob, ST_Multi(ST_Difference(cp.the_geom,ST_Union(v.the_geom))) geom
+  FROM test
+  JOIN cent_pobl cp USING (cd_cpob)
+  JOIN vereda v USING (cd_ver)
+  GROUP BY cd_cpob, cp.the_geom
+);
+```
+
+``` sql
+SELECT ST_GeometryType(geom),count(*) FROM test2 GROUP BY ST_GeometryType(geom);
+```
+
+| st_geometrytype | count |
+|:----------------|------:|
+| ST_MultiPolygon |  7549 |
+
+1 records
+
+``` sql
+SELECT count(DISTINCT cd_cpob)
+FROM cent_pobl
+LEFT JOIN test2 USING (cd_cpob)
+WHERE ST_Area(geom)/ST_Area(the_geom)>0.01;
+```
+
+| count |
+|------:|
+|  1120 |
+
+1 records
+
+``` sql
+SELECT count(DISTINCT cd_cpob)
+FROM cent_pobl
+LEFT JOIN test2 USING (cd_cpob)
+WHERE ST_Area(geom)/ST_Area(the_geom)>0.99;
+```
+
+| count |
+|------:|
+|  1120 |
+
+1 records
+
+``` sql
+SELECT count(DISTINCT cd_cpob)
+FROM cent_pobl
+LEFT JOIN test2 USING (cd_cpob)
+WHERE ST_Area(geom)/ST_Area(the_geom) >0 AND ST_Area(geom)/ST_Area(the_geom) < 0.01;
+```
+
+| count |
+|------:|
+|   279 |
+
+1 records
+
+``` sql
+SELECT count(DISTINCT cd_cpob)
+FROM cent_pobl
+LEFT JOIN test2 USING (cd_cpob)
+WHERE ST_Area(geom)/ST_Area(the_geom)=0;
+```
+
+| count |
+|------:|
+|  6150 |
+
+1 records
+
+``` sql
+INSERT INTO vereda_cpob(cd_cpob,name,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom)
+SELECT cd_cpob, cent_pobl,  cd_mpio, cd_dpto, NULL AS vigencia,NULL AS seudonimos, 'CAPA MGN_URB_AREA_CENSAL CENTROS POBLADOS' AS fuente, NULL AS comentarios, geom
+FROM cent_pobl
+LEFT JOIN test2 USING(cd_cpob)
+WHERE ST_Area(geom)/ST_Area(the_geom)>0.001;
+```
+
+# Did it work? Topologies of municipalities and departments
+
+First we create materialized views for municipalities and departments:
+
+``` sql
+CREATE MATERIALIZED VIEW dissolved_mpio AS(
+  SELECT cd_mpio, municipio, cd_dpto, ST_Union(the_geom) geom
+  FROM municipio
+  LEFT JOIN vereda_cpob USING (cd_mpio,cd_dpto)
+  GROUP BY cd_mpio, municipio, cd_dpto
+);
+```
+
+``` sql
+CREATE INDEX mview_dissolved_mpio_spat_idx ON dissolved_mpio USING GIST(geom);
+```
+
+``` sql
+CREATE MATERIALIZED VIEW dissolved_dpto AS(
+  SELECT cd_dpto, departamento, ST_Union(the_geom) geom
+  FROM departamento
+  LEFT JOIN vereda_cpob USING (cd_dpto)
+  GROUP BY cd_dpto,departamento
+);
+```
+
+``` sql
+CREATE INDEX mview_dissolved_dpto_spat_idx ON dissolved_dpto USING GIST(geom);
+```
+
+``` sql
+CREATE MATERIALIZED VIEW dissolved_colombia AS(
+  SELECT 'Colombia' AS pais, ST_Union(the_geom) geom
+  FROM vereda_cpob
+  GROUP BY 1
+);
+```
+
+It has indeed some interior rings in it:
+
+``` r
+diss_col<-st_read(dev_geogRef,"dissolved_colombia")
+plot(st_geometry(diss_col))
+```
+
+![](step2_creating_database_files/figure-commonmark/unnamed-chunk-80-1.png)
 
 # Turning off the light and leaving
 
