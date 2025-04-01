@@ -9,6 +9,9 @@ format:
 bibliography: sources.bib
 ---
 
+
+
+
 The files have been downloaded with the code from <./step1_downloading_sources.md>.
 Now it is time to create the database and to start analysing the maps.
 
@@ -18,18 +21,27 @@ One of the said advantages is the possibility to directly use spatial indexes wi
 
 # Reading files
 
+
+
+
 ```{r}
-files_sourceMaps<-dir("./sourceMaps",recursive = T)
+files_sourceMaps<-dir("../sourceMaps",recursive = T)
 bs_files_sourceMaps<-basename(files_sourceMaps)
 dir_files_sourceMaps<-dirname(files_sourceMaps)
-downloaded<-read.csv("./sourceMaps/sourcesDownloaded.csv",row.names=1)
+downloaded<-read.csv("../sourceMaps/sourcesDownloaded.csv",row.names=1)
 stopifnot(downloaded$testFile%in%bs_files_sourceMaps)
-mainFiles<-paste0("./sourceMaps/",files_sourceMaps[match(downloaded$testFile,bs_files_sourceMaps)])
+mainFiles<-paste0("../sourceMaps/",files_sourceMaps[match(downloaded$testFile,bs_files_sourceMaps)])
 ```
+
+
+
 
 
 Now we can read the files and put them in a list `data`.
 We will transform the data and put them into MAGNAS-SIRGAS, more fitted to data in Colombia.
+
+
+
 
 
 ```{r}
@@ -49,6 +61,9 @@ data<-lapply(data,function(x){
 ```
 
 
+
+
+
 # Creating the database and putting the raw data in it
 
 
@@ -61,6 +76,9 @@ You may change its name and adresses, but what you need to do is:
 * load the postgis extension in the database, in SQL, from the database newly created: `CREATE EXTENSION postgis`
 
 All of those are possible to be done directly from R, by connecting first to the cluster with superuser rights, but there are many possible configurations, so please do it from your computer with the options that suit you better.
+
+
+
 
 
 
@@ -90,6 +108,9 @@ for(i in 1:length(data))
 }
 ```
 
+
+
+
 ************************************************
 
 Note that there a many topology problems in both the map of the veredas and the map of the resguardos.
@@ -106,6 +127,9 @@ Let's play a bit with it
 
 Good news there are no overlap between the vereda polygons!
 
+
+
+
 ```{sql}
 #| connection: dev_geogRef
 WITH a AS(
@@ -121,7 +145,13 @@ SELECT count(*)
 FROM a
 ```
 
+
+
+
 However, there are a few ones between the polygons of urban centers from the DANE
+
+
+
 
 ```{sql}
 #| connection: dev_geogRef
@@ -138,7 +168,13 @@ SELECT count(*)
 FROM a
 ```
 
+
+
+
 And, a few more between the polygons of the resguardos from the Agencia Nacional de Tierras.
+
+
+
 
 ```{sql}
 #| connection: dev_geogRef
@@ -155,6 +191,9 @@ SELECT count(*)
 FROM a
 ```
 
+
+
+
 These overlaps might be problematic in the senses that:
 
 * we could not create a rule of mutual exclusion in the final table
@@ -168,14 +207,15 @@ However the good news is that the central system of veredas would not contain th
 Concerning the veredas, we've got a lot of "holes" in the maps, which mostly correspond to dense urban areas (and therefore might be corrected by using *raw_centpobl*).
 
 
+
+
+
 ```{r}
 #| fig-width: 10
 #| fig-height: 10
 diss_veredas<-st_read(dev_geogRef,query="SELECT ST_UNION(geom) FROM raw_veredas")
 plot(diss_veredas,mar=c(0,0,0,0),col="red",border=NA)
 ```
-
- 
 
 ```{r}
 #| fig-width: 10
@@ -184,7 +224,13 @@ diss_centpob<-st_read(dev_geogRef,query="SELECT ST_UNION(geom) FROM raw_centpobl
 plot(diss_centpob,mar=c(0,0,0,0),border="grey",col="blue",lwd=.1)
 ```
 
+
+
+
 Here we can see that most (all?) of the holes from veredas are filled up with urban areas:
+
+
+
 
 ```{r}
 #| fig-width: 10
@@ -192,6 +238,9 @@ Here we can see that most (all?) of the holes from veredas are filled up with ur
 plot(diss_centpob,col="blue",border=NA,reset=F)
 plot(diss_veredas,col="red",border=NA,add=T)
 ```
+
+
+
 
 This means that we could have a complete map by merging the objects.
 
@@ -202,6 +251,9 @@ This means that we could have a complete map by merging the objects.
 
 We've got another problem here, everything is as instead of having multipolygons, *raw_centpobl* had transformed the multipolygons into polygons.
 The same can be said for *raw_vereda*.
+
+
+
 
 ```{sql}
 #| connection: dev_geogRef
@@ -217,12 +269,17 @@ LEFT JOIN raw_centpobl rc USING (orig_fid)
 ORDER BY orig_fid 
 ```
 
+
+
+
 The best might be to create new tables...
+
+
+
 
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS raw_centpobl2 CASCADE;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE raw_centpobl2 AS(
@@ -232,26 +289,21 @@ CREATE TABLE raw_centpobl2 AS(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 ALTER TABLE raw_centpobl2 ALTER COLUMN geom TYPE GEOMETRY(MULTIPOLYGON,4686);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX raw_centpobl2_spat_idx ON raw_centpobl2 USING GIST(geom);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 ALTER TABLE raw_centpobl2 ADD PRIMARY KEY (cod_cpob);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS raw_veredas2 CASCADE;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE raw_veredas2 AS(
@@ -261,15 +313,16 @@ CREATE TABLE raw_veredas2 AS(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 ALTER TABLE raw_veredas2 ADD PRIMARY KEY (codigo_ver);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX IF NOT EXISTS raw_veredas2_spat_idx ON raw_veredas2 USING GIST(geom);
 ```
+
+
+
 
 
 # Check which ones correspond to empty areas in raw_veredas
@@ -323,20 +376,20 @@ hist(cp2$prop_area_vereda, nclass=100)
 
 
 
+
+
+
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS departamento CASCADE;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS municipio CASCADE;
 ```
 
-
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS vereda CASCADE;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE departamento(
@@ -345,7 +398,6 @@ CREATE TABLE departamento(
   distrito_capital boolean default false
 );
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE municipio(
@@ -356,11 +408,9 @@ CREATE TABLE municipio(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX fkey_municipio_departamento_cd_dpto_idx ON municipio(cd_dpto);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE vereda(
@@ -376,27 +426,29 @@ CREATE TABLE vereda(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT AddGeometryColumn ('public','vereda','the_geom',4686,'MULTIPOLYGON',2);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX fkey_vereda_municipio_cd_mpio_idx ON vereda(cd_mpio);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX fkey_vereda_municipio_cd_dpto_idx ON vereda(cd_dpto);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX vereda_the_geom_spat_idx ON vereda USING GIST(the_geom);
 ```
 
+
+
+
 ## Populating the tables
+
+
+
 
 ```{sql, connection=dev_geogRef}
 INSERT INTO departamento(cd_dpto,departamento)
@@ -404,13 +456,18 @@ SELECT DISTINCT cod_dpto,nom_dep
 FROM raw_veredas2;
 ```
 
-
 ```{sql, connection=dev_geogRef}
 UPDATE departamento SET distrito_capital=true WHERE cd_dpto='11';
 ```
 
 
+
+
+
 It appears there is an error with the vereda SAN JUAN DE LAS COCHAS (86219000) en el departamento del Putumayo, which appears in the municipality SIBUNDOY when its code places it in the municipality COLÓN. It would need some more research to know whether the error is the municipality or the code, but for now we will accept the code and change the name of the municipality
+
+
+
 
 ```{sql, connection=dev_geogRef}
 UPDATE raw_veredas2
@@ -418,13 +475,11 @@ SET nomb_mpio='COLÓN'
 WHERE codigo_ver='86219000';
 ```
 
-
 ```{sql, connection=dev_geogRef}
 INSERT INTO municipio
 SELECT DISTINCT dptompio,nomb_mpio,cod_dpto
 FROM raw_veredas2;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 INSERT INTO vereda(cd_ver,vereda,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom)
@@ -458,18 +513,22 @@ FROM raw_veredas2
 
 
 
+
+
+
 # Creating the urban center layer
+
+
+
 
 
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS clas_cent_pobl CASCADE;
 ```
 
-
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS cent_pobl CASCADE;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE clas_cent_pobl
@@ -479,7 +538,6 @@ CREATE TABLE clas_cent_pobl
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 INSERT INTO clas_cent_pobl
 VALUES
@@ -487,7 +545,6 @@ VALUES
   (2,'Centro urbano'),
   (3,'Rural');
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE cent_pobl(
@@ -502,56 +559,45 @@ CREATE TABLE cent_pobl(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT AddGeometryColumn ('public','cent_pobl','the_geom',4686,'MULTIPOLYGON',2);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX fkey_cent_pobl_municipio_cd_mpio_idx ON cent_pobl(cd_mpio);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX fkey_cent_pobl_municipio_cd_dpto_idx ON cent_pobl(cd_dpto);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX cent_pobl_the_geom_spat_idx ON cent_pobl USING GIST(the_geom);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN cent_pobl.cd_cpob IS 'Código DANE concatenado departamento, municipio y  centro poblado';
 ```
-
 
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN cent_pobl.cd_dane IS 'Código DANE concatenado departamento, municipio, clase, sector rural, sección rural y centro poblado';
 ```
 
-
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN cent_pobl.cd_dpto IS 'Código DANE departamento';
 ```
-
 
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN cent_pobl.cd_mpio IS 'Código DANE municipio';
 ```
 
-
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN cent_pobl.cd_setr IS 'Código DANE sector rural';
 ```
 
-
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN cent_pobl.cd_secr IS 'Código DANE sección rural';
 ```
-
 
 ```{sql, connection=dev_geogRef}
 INSERT INTO cent_pobl
@@ -561,11 +607,17 @@ FROM raw_centpobl2;
 
 
 
+
+
+
 # Adding urban centers into the vereda layer (filling holes)
 
 
 
 I don't understand why those give different results:
+
+
+
 
 ```{sql, connection=dev_geogRef}
 SELECT cd_cpob, cd_ver, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true) common_area_m2
@@ -574,7 +626,6 @@ JOIN vereda cp ON ST_Intersects(v.the_geom,cp.the_geom) AND ST_Area(ST_intersect
 ORDER BY cd_cpob, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT cd_cpob, cd_ver, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true) common_area_m2
 FROM cent_pobl v
@@ -582,11 +633,9 @@ JOIN vereda cp ON ST_Overlaps(v.the_geom,cp.the_geom)
 ORDER BY cd_cpob, ST_Area(ST_intersection(v.the_geom,cp.the_geom),true);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS test;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE test AS(
@@ -596,11 +645,9 @@ CREATE TABLE test AS(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT ST_GeometryType(geom),min(area),max(area),count(*) FROM test GROUP BY ST_GeometryType(geom);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 SELECT cd_cpob, count(DISTINCT cd_ver)
@@ -610,12 +657,17 @@ GROUP BY cd_cpob
 ORDER BY count(DISTINCT cd_ver);
 ```
 
+
+
+
 # Creating the layer with veredas and urban centers
+
+
+
 
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS vereda_cpob CASCADE;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE vereda_cpob
@@ -633,36 +685,29 @@ CREATE TABLE vereda_cpob
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT AddGeometryColumn ('public','vereda_cpob','the_geom',4686,'MULTIPOLYGON',2);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX IF NOT EXISTS fkey_vereda_cpob_municipio_cd_mpio_idx ON vereda_cpob(cd_mpio);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX IF NOT EXISTS fkey_vereda_cpob_departamento_cd_dpto_idx ON vereda_cpob(cd_dpto);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE INDEX IF NOT EXISTS vereda_cpob_the_geom_spat_idx ON vereda_cpob USING GIST(the_geom);
 ```
 
-
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN vereda_cpob.cd_ver IS 'Null cuando es una vereda clasica, cuando es un centro poblado, corresponde al Código DANE concatenado departamento, municipio y  centro poblado';
 ```
 
-
 ```{sql, connection=dev_geogRef}
 COMMENT ON COLUMN vereda_cpob.cd_cpob IS 'Null cuando es una vereda clasica, cuando es un centro poblado, corresponde al Código DANE concatenado departamento, municipio y  centro poblado';
 ```
-
 
 ```{sql, connection=dev_geogRef}
 INSERT INTO vereda_cpob(cd_ver,name,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom)
@@ -671,12 +716,9 @@ FROM vereda
 ;
 ```
 
-
-
 ```{sql, connection=dev_geogRef}
 DROP TABLE IF EXISTS test2;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE TABLE test2 AS(
@@ -688,11 +730,9 @@ CREATE TABLE test2 AS(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT ST_GeometryType(geom),count(*) FROM test2 GROUP BY ST_GeometryType(geom);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 SELECT count(DISTINCT cd_cpob)
@@ -701,14 +741,12 @@ LEFT JOIN test2 USING (cd_cpob)
 WHERE ST_Area(geom)/ST_Area(the_geom)>0.01;
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT count(DISTINCT cd_cpob)
 FROM cent_pobl
 LEFT JOIN test2 USING (cd_cpob)
 WHERE ST_Area(geom)/ST_Area(the_geom)>0.99;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 SELECT count(DISTINCT cd_cpob)
@@ -717,14 +755,12 @@ LEFT JOIN test2 USING (cd_cpob)
 WHERE ST_Area(geom)/ST_Area(the_geom) >0 AND ST_Area(geom)/ST_Area(the_geom) < 0.01;
 ```
 
-
 ```{sql, connection=dev_geogRef}
 SELECT count(DISTINCT cd_cpob)
 FROM cent_pobl
 LEFT JOIN test2 USING (cd_cpob)
 WHERE ST_Area(geom)/ST_Area(the_geom)=0;
 ```
-
 
 ```{sql, connection=dev_geogRef}
 INSERT INTO vereda_cpob(cd_cpob,name,cd_mpio,cd_dpto,vigencia,seudonimos,fuente,comentarios,the_geom)
@@ -734,9 +770,15 @@ LEFT JOIN test2 USING(cd_cpob)
 WHERE ST_Area(geom)/ST_Area(the_geom)>0.001;
 ```
 
+
+
+
 # Did it work? Topologies of municipalities and departments
 
 First we create materialized views for municipalities and departments:
+
+
+
 
 ```{sql, connection=dev_geogRef}
 CREATE MATERIALIZED VIEW dissolved_mpio AS(
@@ -747,11 +789,9 @@ CREATE MATERIALIZED VIEW dissolved_mpio AS(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX mview_dissolved_mpio_spat_idx ON dissolved_mpio USING GIST(geom);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE MATERIALIZED VIEW dissolved_dpto AS(
@@ -762,11 +802,9 @@ CREATE MATERIALIZED VIEW dissolved_dpto AS(
 );
 ```
 
-
 ```{sql, connection=dev_geogRef}
 CREATE INDEX mview_dissolved_dpto_spat_idx ON dissolved_dpto USING GIST(geom);
 ```
-
 
 ```{sql, connection=dev_geogRef}
 CREATE MATERIALIZED VIEW dissolved_colombia AS(
@@ -777,14 +815,26 @@ CREATE MATERIALIZED VIEW dissolved_colombia AS(
 
 ```
 
+
+
+
 It has indeed some interior rings in it:
+
+
+
 
 ```{r}
 diss_col<-st_read(dev_geogRef,"dissolved_colombia")
 plot(st_geometry(diss_col))
 ```
 
+
+
+
 # Turning off the light and leaving
+
+
+
 
 ```{r}
 dbDisconnect(dev_geogRef)

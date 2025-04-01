@@ -4,7 +4,7 @@ author: "Marius Bottin"
 format: 
   gfm:
     df-print: kable
-bibliography: sources.bib
+bibliography: "../sources.bib"
 ---
 
 The idea here is to download automatically the sources so people can repeat the code for creating the reference database without needing to make some subjective clicking.
@@ -83,7 +83,7 @@ unpackArchive<-function(compressedFile,destDir,type=c("zip","rar"))
 
 ```{r}
 # Creating the external data folder
-extDatFol<-"./sourceMaps"
+extDatFol<-"../sourceMaps"
 if(!dir.exists(extDatFol)){
   dir.create(extDatFol)
 }

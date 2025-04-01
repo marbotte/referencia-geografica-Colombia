@@ -66,7 +66,7 @@ be extra-careful here, we would not like to make your system worse than
 it already is… I am willing to change my code for more compatibility for
 your system, though.
 
-It works on my computer (6.12.16-gentoo-x86_64)
+It works on my computer (6.6.74-gentoo-x86_64)
 
 ``` r
 existUnrar<-function()
@@ -98,7 +98,7 @@ unpackArchive<-function(compressedFile,destDir,type=c("zip","rar"))
 
 ``` r
 # Creating the external data folder
-extDatFol<-"./sourceMaps"
+extDatFol<-"../sourceMaps"
 if(!dir.exists(extDatFol)){
   dir.create(extDatFol)
 }
