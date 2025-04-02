@@ -60,3 +60,8 @@ sourceMaps/
 # BAK bib files
 **/**.bib.sav
 **/**.bib.bak
+
+
+# Password
+password
+
