@@ -1,11 +1,12 @@
-# Colombian geographic reference database: development database creation
+# Colombian geographic reference database: Administration and Users
 Marius Bottin
 
 Here we will describe some operations for the database administration.
 In particular, we will create users for the database use. In our case
 the connection will be possible from the Humboldt Institute network. The
 PostgreSQL cluster has been set up for accepting these connections, and
-we will not give details about the setup process.
+we will not give details about the setup process (there are a lot of
+resources out there about postgres cluster connection setup)
 
 ``` r
 require(RPostgres)
@@ -49,6 +50,22 @@ GRANT CONNECT ON DATABASE dev_geogref TO geogref_user;
 GRANT USAGE ON SCHEMA public TO geogref_user;
 ```
 
+``` sql
+GRANT TEMPORARY ON DATABASE dev_geogref TO geogref_user;
+```
+
+``` sql
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO geogref_user;
+```
+
+``` sql
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO geogref_user;
+```
+
+``` sql
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO geogref_user;
+```
+
 ## Create the real users
 
 In order to avoid divulgating the password of the users, I create a file
@@ -79,6 +96,8 @@ if(!gic_exists)
 }
 dbSendQuery(dgr,"GRANT geogref_user TO gic")
 ```
+
+    NOTICE:  role "gic" is already a member of role "geogref_user"
 
     <PqResult>
       SQL  GRANT geogref_user TO gic

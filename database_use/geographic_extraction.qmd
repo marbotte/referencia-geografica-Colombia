@@ -1,0 +1,175 @@
+---
+title: "Extracting administrative locations"
+author: "Marius Bottin"
+toc: true
+bibliography: "../sources.bib"
+format: 
+  gfm:
+    df-print: kable
+knitr: 
+  opts_chunk: 
+    fig.path: "./Fig/extractLoc_"
+execute: 
+  tidy: true
+  tidy-opts:
+    - width-cutoff: 60
+---
+
+In this document we will show how to extract administrative levels (country, department, municipality, vereda) of locations from the database that have been created from the codes in the [database_creation](../database_creation) directory.
+
+Later we may treat as well the cases of polygons or lines, but since those objects may be in more than one vereda, we will only treat here the case of points.
+
+## Main function
+
+The main function consists in importing a temporary spatial table with the points in the database, make the spatial join with the vereda layer in there and send back the resulting administrative polygons it intersects with.
+Note that this way of doing things might be the most efficient for large points dataset, but not for a few points.
+
+
+### R
+
+In R the function is:
+
+```{r}
+#| file: "./ptsOnColombia_adm.R"
+#| tidy: true
+source("./ptsOnColombia_adm.R",echo=F)
+```
+
+
+
+### Python
+
+**********************************************
+
+This section still need to be done, as well as everything concerning python, any help would be appreciated!
+The idea would be to adapt the R code to work with `geopandas`.
+
+**********************************************
+
+## Concrete use of the database
+
+The main function will be central in all searches for administrative location of points.
+However, it needs a few operations of data formatting, and some other operations might be useful for formatting the results.
+We will show here how to do that.
+
+
+### In R
+
+#### Preparing the database connection
+
+In all cases we will need a connection to the database.
+For those in the Humboldt institute, they may request the credential to connect to the database.
+
+Considering the following connection parameters 
+
+Notes:
+
+1. I will not expose the password here, so please adapt
+1. The ip given here is a local one, which should work only from the Humboldt institute network, or if you use a vpn to connect into this network
+
+Connection:
+
+```r
+require(RPostgres)
+ipServer <- "192.168.205.2"
+password <- "thisIsNotTheRealPassword"
+database <- "dev_geogref"
+user <- "gic"
+dgr <- dbConnect(Postgres(), host=ipserver, dbname=database, user = user, password=password)
+```
+
+```{r, include=F, eval=T}
+require(RPostgres)
+dgr <-dbConnect(Postgres(),dbname="dev_geogref",user="gic")
+```
+
+
+#### Caso: coordenadas en un archivo csv
+
+**********************************
+
+Note: the file [database_use/practical_examples_scripts/R/csv.R](./practical_examples_scripts/R/csv.R) contains a script which may be adapted to your needs when you work on coordinates in such a file.
+
+**********************************
+
+
+
+We will refer to the example dataset provided in this repository in a csv file (see [here](./ejemplo_site_point.csv)).
+In this example, I prepared a dataset with WGS84 coordinates (SRID: [4326](https://epsg.io/4326)).
+
+First we read the data:
+
+```{r}
+file <- "./ejemplo_site_point.csv"
+(dataPoints <- read.csv(file))
+```
+
+Next we transform the `dataPoints` object as a spatial object of the `sf` R package:
+
+```{r}
+require(sf)
+pointsSrid<-st_crs(4326)
+dataPoints<-st_as_sf(dataPoints,coords=c("coord_x","coord_y"),crs=pointsSrid)
+```
+
+Let's look whether the obtained spatial objects works!
+
+First we download the Colombian map from the database:
+
+```{r}
+colombia<-st_read(dsn=dgr,layer="dissolved_colombia")
+```
+
+Next we represent the map of colombia with the points:
+
+```{r}
+par(mar=rep(0,4))
+plot(st_geometry(st_transform(colombia,pointsSrid),reset=F))
+plot(st_geometry(dataPoints),add=T, col="red")
+```
+
+
+Now that we ckecked that the points were well proyected, we can proceed with the use of the geographic extraction function.
+
+To use the function we need to have a unique id, in the case of the csv, it might be done by associating the project and the site:
+
+```{r}
+dataPoints$uniqueId <- paste0(dataPoints$proyecto,dataPoints$site)
+```
+
+
+```{r}
+(extractedLoc<-ptsOnColombia_adm(pts=dataPoints,dbConn = dgr,id="uniqueId"))
+```
+
+One important data returned by the function is "*type_found*":
+
+* **vereda**: the point is in a vereda
+* **centro poblado**: the point is in a urban area
+* **not found**: the point is not in any polygon of vereda or urban area, likely it is outside Colombia, as it is the case for the point C1 here
+
+In some cases, it might be interesting to add a "DWithin" option in the `ptsOnColombia_adm` function. What it does is to search for all the veredas and urban areas at a distance of the points, in meters.
+
+Of course the calculation is much heavier, so it might be very long when the dataset is large, and for this it might result more adapted to replicate the database in a local machine... Note also: for these operations it might be useful to add the parameter indexing in the function which creates a spatial index on the point temporary dataset in the database.
+
+```{r}
+(extractedLoc_dis1km<-ptsOnColombia_adm(pts=dataPoints,dbConn = dgr,id="uniqueId",DWithin = 1000, indexing = T))
+```
+
+Note that of course, since there might be more than one polygon at the distance to the point, the id of the points might be repeated in the results!
+
+You might want to export the results in a csv file, it may be done with:
+
+```r
+fileResults <- path/to/file/file.csv
+write.csv(extractedLoc,fileResults)
+```
+
+# Closing connection
+
+It is important to close the connection when you use the database, so the system is not overload with old connections:
+
+```{r}
+dbDisconnect(dgr)
+```
+

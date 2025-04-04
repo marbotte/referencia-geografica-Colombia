@@ -1,5 +1,5 @@
 ---
-title: "Colombian geographic reference database: development database creation"
+title: "Colombian geographic reference database: Administration and Users"
 author: "Marius Bottin"
 format: 
   gfm:
@@ -55,6 +55,24 @@ GRANT CONNECT ON DATABASE dev_geogref TO geogref_user;
 
 ```{sql, connection=dgr}
 GRANT USAGE ON SCHEMA public TO geogref_user;
+```
+
+```{sql, connection=dgr}
+GRANT TEMPORARY ON DATABASE dev_geogref TO geogref_user;
+```
+
+
+```{sql, connection=dgr}
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO geogref_user;
+```
+
+```{sql, connection=dgr}
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO geogref_user;
+```
+
+
+```{sql, connection=dgr}
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO geogref_user;
 ```
 
 
