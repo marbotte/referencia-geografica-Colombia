@@ -22,7 +22,6 @@ For checking geographic consistency and the extraction of location information, 
 The work done in its repository should be available through connection and to be repeatable in local machine for heavy use of the dataset.
 
 ## Directory structure and use of included documents
-
 There are 2 main directories in the repository:
 
 * [database_creation](./database_creation) contains documents and codes which explain how to create the database from internet sources
@@ -32,5 +31,3 @@ Mainly, the codes and information are included in document using quarto, which a
 
 From these documents you may extract the code part of the documents, or compile in other formats.
 Please check documentation on quarto documents in the Posit (Rstudio) documentation.
-
-
